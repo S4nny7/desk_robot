@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "author": "Anonymous maker",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    {
+      "type": "board-ssd1306",
+      "id": "oled1",
+      "top": 233.54,
+      "left": -143.77,
+      "attrs": { "i2cAddress": "0x3c" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": 35,
+      "left": -220.8,
+      "attrs": { "color": "green", "xray": "1" }
+    },
+    {
+      "type": "board-ili9341-cap-touch",
+      "id": "lcd1",
+      "top": -37.64,
+      "left": 153.22,
+      "attrs": {}
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "oled1:SCL", "esp:22", "violet", [ "h0.3", "v-259.2", "h187.16" ] ],
+    [ "oled1:SDA", "esp:21", "purple", [ "v-268.8", "h192.07", "v105.6" ] ],
+    [ "oled1:VCC", "esp:3V3", "red", [ "v0" ] ],
+    [ "oled1:GND", "esp:GND.2", "black", [ "v-278.4", "h230.4", "v67.2" ] ],
+    [ "btn1:1.l", "esp:26", "green", [ "h-19.2", "v48" ] ],
+    [ "btn1:2.r", "oled1:GND", "black", [ "h0" ] ],
+    [ "lcd1:SCL", "oled1:SCL", "orange", [ "v9.6", "h-307.2", "v-48", "h-57.6" ] ],
+    [ "lcd1:SDA", "oled1:SDA", "gold", [ "v19.2", "h-307.2", "v-67.2", "h-57.6" ] ],
+    [ "lcd1:VCC", "oled1:VCC", "red", [ "v28.8", "h-201.6", "v-86.4", "h-86.4" ] ],
+    [ "lcd1:GND", "oled1:GND", "black", [ "v76.8", "h-355.2", "v-105.6", "h48" ] ]
+  ],
+  "dependencies": {}
+}
