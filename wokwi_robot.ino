@@ -6,6 +6,8 @@
 #include "robot_happy.h"
 #include "robot_blush.h"
 #include "robot_joy.h"
+#include "robot_blink1.h"
+#include "robot_blink2.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -29,7 +31,6 @@ Adafruit_FT6206 touch = Adafruit_FT6206();
 // ==========================================
 
 unsigned long happyStartTime = 0;
-unsigned long touchStartTime = 0;
 
 bool showingHappy = false;
 bool showingBlush = false;
@@ -102,6 +103,8 @@ void setup()
   // ==========================================
 
   showHappyFace();
+
+  showingHappy = true;
 }
 
 // ==========================================
@@ -145,53 +148,56 @@ void loop()
   if (touch.touched() && !touchActive && !touchCooldown)
   {
 
-    Serial.println("TOUCHED!");
+    Serial.println("BLINK!");
 
-    // Stop all face animations
+    // Stop other face animations
     showingHappy = false;
     showingBlush = false;
     showingJoy = false;
 
-    // Clear robot face
-    display.clearDisplay();
-
-    // Show TOUCHED!
-    display.setTextSize(2);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(10, 25);
-
-    display.println("TOUCHED!");
-
-    display.display();
-
-    // Start 3 second timer
-    touchStartTime = millis();
-
+    // Start blink animation
     touchActive = true;
-  }
 
-  // ==========================================
-  // 3 SECOND TIMER
-  // ==========================================
+    // ------------------------------------------
+    // FRAME 1 - HAPPY
+    // ------------------------------------------
 
-  if (touchActive && millis() - touchStartTime >= 3000)
-  {
+    showHappyFace();
 
-    Serial.println("3 seconds finished!");
+    delay(100);
 
-    // Clear TOUCHED!
-    display.clearDisplay();
-    display.display();
+    // ------------------------------------------
+    // FRAME 2 - BLINK 1
+    // ------------------------------------------
 
-    // Show JOY face
-    showJoyFace();
+    showBlink1();
 
-    showingJoy = true;
+    delay(70);
 
-    // Touch interaction finished
+    // ------------------------------------------
+    // FRAME 3 - BLINK 2
+    // ------------------------------------------
+
+    showBlink2();
+
+    delay(60);
+
+    showBlink1();
+
+    delay(70);
+
+    // ------------------------------------------
+    // FRAME 4 - HAPPY AGAIN
+    // ------------------------------------------
+
+    showHappyFace();
+
+    Serial.println("Blink finished!");
+
+    // Animation finished
     touchActive = false;
 
-    // Prevent another trigger while finger
+    // Prevent another blink while finger
     // is still touching
     touchCooldown = true;
   }
@@ -209,79 +215,101 @@ void loop()
   }
 
   // ==========================================
-  // HAPPY → BLUSH AFTER 1 SECOND
+  // HAPPY FACE
   // ==========================================
 
-  if (
-      !touchActive &&
-      !touchCooldown &&
-      showingHappy &&
-      millis() - happyStartTime >= 1000)
+  void showHappyFace()
   {
 
-    showBlushFace();
+    display.clearDisplay();
 
-    showingHappy = false;
-    showingBlush = true;
+    display.drawBitmap(
+        0,
+        0,
+        epd_bitmap_happy,
+        128,
+        64,
+        SSD1306_WHITE);
+
+    display.display();
   }
-}
 
-// ==========================================
-// HAPPY FACE
-// ==========================================
+  // ==========================================
+  // BLUSH FACE
+  // ==========================================
 
-void showHappyFace()
-{
+  void showBlushFace()
+  {
 
-  display.clearDisplay();
+    display.clearDisplay();
 
-  display.drawBitmap(
-      0,
-      0,
-      epd_bitmap_robot_happy1,
-      128,
-      64,
-      SSD1306_WHITE);
+    display.drawBitmap(
+        0,
+        0,
+        epd_bitmap_robot_blush,
+        128,
+        64,
+        SSD1306_WHITE);
 
-  display.display();
-}
+    display.display();
+  }
 
-// ==========================================
-// BLUSH FACE
-// ==========================================
+  // ==========================================
+  // JOY FACE
+  // ==========================================
 
-void showBlushFace()
-{
+  void showJoyFace()
+  {
 
-  display.clearDisplay();
+    display.clearDisplay();
 
-  display.drawBitmap(
-      0,
-      0,
-      epd_bitmap_robot_blush,
-      128,
-      64,
-      SSD1306_WHITE);
+    display.drawBitmap(
+        0,
+        0,
+        epd_bitmap_robot_joy,
+        128,
+        64,
+        SSD1306_WHITE);
 
-  display.display();
-}
+    display.display();
+  }
 
-// ==========================================
-// JOY FACE
-// ==========================================
+  // ==========================================
+  // BLINK 1
+  // ==========================================
 
-void showJoyFace()
-{
+  void showBlink1()
+  {
 
-  display.clearDisplay();
+    display.clearDisplay();
 
-  display.drawBitmap(
-      0,
-      0,
-      epd_bitmap_robot_joy,
-      128,
-      64,
-      SSD1306_WHITE);
+    display.drawBitmap(
+        0,
+        0,
+        epd_bitmap_blink_1,
+        128,
+        64,
+        SSD1306_WHITE);
 
-  display.display();
-}
+    display.display();
+  }
+
+  // ==========================================
+  // BLINK 2
+  // ==========================================
+
+  void showBlink2()
+  {
+
+    display.clearDisplay();
+
+    display.drawBitmap(
+        0,
+        0,
+        epd_bitmap_blink_2,
+        128,
+        64,
+        SSD1306_WHITE);
+
+    display.display();
+  }
