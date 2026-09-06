@@ -1,21 +1,43 @@
 #include <Wire.h>
+#include <SPI.h>
+
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Adafruit_FT6206.h>
 
-#include "robot_happy.h"
-#include "robot_blush.h"
-#include "robot_joy.h"
-#include "robot_blink1.h"
-#include "robot_blink2.h"
+#include <WiFi.h>
+#include <time.h>
+#include <Preferences.h>
+
+#include <FluxGarage_RoboEyes.h>
+
+// Set 1 for Wokwi simulator, 0 for real board (TTP223)
+#define WOKWI_SIMULATION 1
+
+#if WOKWI_SIMULATION
+#include <Adafruit_FT6206.h>
+#include <Adafruit_ILI9341.h>
+#endif
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-
 #define OLED_RESET -1
 #define OLED_ADDRESS 0x3C
 
+#if WOKWI_SIMULATION
+#define TFT_CS 15
+#define TFT_DC 2
+#endif
+
+#define TOUCH_PIN 27 // real TTP223 OUT pin
 #define BUTTON_PIN 26
+
+#if WOKWI_SIMULATION
+const char *ssid_Router = "Wokwi-GUEST";
+const char *password_Router = "";
+#else
+const char *ssid_Router = "Telstra8A5240";
+const char *password_Router = "k5954s3e24";
+#endif
 
 Adafruit_SSD1306 display(
     SCREEN_WIDTH,
@@ -23,54 +45,313 @@ Adafruit_SSD1306 display(
     &Wire,
     OLED_RESET);
 
-// FT6206 capacitive touch controller
+#if WOKWI_SIMULATION
 Adafruit_FT6206 touch = Adafruit_FT6206();
+Adafruit_ILI9341 tft(TFT_CS, TFT_DC);
+#endif
 
-// ==========================================
-// VARIABLES
-// ==========================================
+RoboEyes<Adafruit_SSD1306> roboEyes(display);
 
-unsigned long happyStartTime = 0;
+struct tm timeInfo;
+Preferences journalPrefs;
 
-bool showingHappy = false;
-bool showingBlush = false;
-bool showingJoy = false;
-
-bool touchActive = false;
 bool touchCooldown = false;
+bool wifiConnected = false;
+bool timeIsValid = false;
 
-// ==========================================
-// SETUP
-// ==========================================
+// ---------- Touch abstraction ----------
+
+void touchSetup()
+{
+#if WOKWI_SIMULATION
+  Serial.println("Starting ILI9341 touch screen...");
+
+  tft.begin();
+  tft.setRotation(1);
+  tft.fillScreen(ILI9341_BLACK);
+
+  Serial.println("ILI9341 connected!");
+
+  Serial.println("Starting FT6206 touch controller...");
+
+  if (!touch.begin(40))
+  {
+    Serial.println("FT6206 touch controller not found!");
+
+    while (true)
+    {
+      delay(100);
+    }
+  }
+
+  Serial.println("FT6206 touch connected!");
+#else
+  Serial.println("Configuring TTP223 touch sensor...");
+
+  pinMode(TOUCH_PIN, INPUT);
+
+  Serial.println("TTP223 touch sensor ready!");
+#endif
+}
+
+bool touchIsTouched()
+{
+#if WOKWI_SIMULATION
+  return touch.touched();
+#else
+  return digitalRead(TOUCH_PIN) == HIGH;
+#endif
+}
+
+// ---------- WiFi / NTP ----------
+
+bool connectToWiFi()
+{
+  Serial.println();
+  Serial.println("===== WIFI CONNECTION =====");
+
+  WiFi.begin(ssid_Router, password_Router);
+
+  Serial.println(String("Connecting to ") + ssid_Router);
+
+  unsigned long startAttempt = millis();
+  const unsigned long timeoutMs = 15000;
+
+  while (WiFi.status() != WL_CONNECTED &&
+         millis() - startAttempt < timeoutMs)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println("Wi-Fi connected!");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+    Serial.println("===========================");
+    return true;
+  }
+
+  Serial.println("Wi-Fi connection FAILED (timed out).");
+  Serial.println("Continuing without network - check SSID/password.");
+  Serial.println("===========================");
+  return false;
+}
+
+bool getCurrentTime()
+{
+  if (!wifiConnected)
+  {
+    Serial.println("Skipping NTP sync - no Wi-Fi.");
+    return false;
+  }
+
+  Serial.println();
+  Serial.println("===== NTP TIME =====");
+
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+  setenv("TZ", "AEST-10AEDT,M10.1.0,M4.1.0/3", 1);
+  tzset();
+
+  Serial.println("Waiting for time...");
+
+  unsigned long startAttempt = millis();
+  const unsigned long timeoutMs = 10000;
+
+  while (!getLocalTime(&timeInfo) &&
+         millis() - startAttempt < timeoutMs)
+  {
+    delay(200);
+  }
+
+  if (timeInfo.tm_year + 1900 < 2020)
+  {
+    Serial.println("Failed to get time!");
+    timeIsValid = false;
+    return false;
+  }
+
+  timeIsValid = true;
+
+  Serial.println("Time received!");
+  Serial.println(&timeInfo, "%A, %d %B %Y");
+  Serial.println(&timeInfo, "Time: %H:%M:%S");
+  Serial.println("====================");
+
+  return true;
+}
+
+void printCurrentDateTime()
+{
+  if (!getLocalTime(&timeInfo))
+  {
+    Serial.println("Could not get current time.");
+    return;
+  }
+
+  Serial.println();
+  Serial.println("===== CURRENT DATE/TIME =====");
+
+  Serial.printf(
+      "Date: %02d-%02d-%04d\n",
+      timeInfo.tm_mday,
+      timeInfo.tm_mon + 1,
+      timeInfo.tm_year + 1900);
+
+  Serial.printf(
+      "Time: %02d:%02d:%02d\n",
+      timeInfo.tm_hour,
+      timeInfo.tm_min,
+      timeInfo.tm_sec);
+
+  Serial.println("=============================");
+}
+
+// ---------- Journal streak tracking ----------
+// NVS keys: trackDay, pressCount, lastEntryDay, streak, lastEntryTime
+
+long getEpochDay()
+{
+  time_t nowEpoch = mktime(&timeInfo);
+  return (long)(nowEpoch / 86400L);
+}
+
+void joyfulReaction(long todayEpochDay)
+{
+  Serial.println("MOCHI IS JOYFUL! Journal entry logged.");
+
+  long lastEntryDay = journalPrefs.getLong("lastEntryDay", -1);
+  int streak = journalPrefs.getInt("streak", 0);
+
+  streak = (lastEntryDay == todayEpochDay - 1) ? streak + 1 : 1;
+
+  journalPrefs.putLong("lastEntryDay", todayEpochDay);
+  journalPrefs.putInt("streak", streak);
+  journalPrefs.putULong("lastEntryTime", (unsigned long)mktime(&timeInfo));
+
+  Serial.printf("Current streak: %d day(s)\n", streak);
+  Serial.println(&timeInfo, "Logged at: %A, %d %B %Y %H:%M:%S");
+
+  roboEyes.setMood(HAPPY);
+  roboEyes.anim_laugh();
+
+  unsigned long startTime = millis();
+  while (millis() - startTime < 1000)
+  {
+    roboEyes.update();
+    delay(10);
+  }
+
+  roboEyes.setMood(HAPPY);
+}
+
+void confusedReaction()
+{
+  Serial.println("MOCHI IS CONFUSED! You already journaled today.");
+
+  roboEyes.anim_confused();
+
+  unsigned long startTime = millis();
+  while (millis() - startTime < 1000)
+  {
+    roboEyes.update();
+    delay(10);
+  }
+
+  roboEyes.setMood(DEFAULT);
+}
+
+void angryReaction()
+{
+  Serial.println("MOCHI IS ANGRY! Stop pressing, one entry per day.");
+
+  roboEyes.setMood(ANGRY);
+
+  unsigned long startTime = millis();
+  while (millis() - startTime < 1200)
+  {
+    roboEyes.update();
+    delay(10);
+  }
+
+  roboEyes.setMood(DEFAULT);
+}
+
+void handleJournalButtonPress()
+{
+  if (!timeIsValid)
+  {
+    Serial.println("Can't log journal entry - time not synced (check Wi-Fi/NTP).");
+    return;
+  }
+
+  long todayEpochDay = getEpochDay();
+  long storedDay = journalPrefs.getLong("trackDay", -1);
+  int pressCount;
+
+  if (storedDay != todayEpochDay)
+  {
+    pressCount = 0;
+    journalPrefs.putLong("trackDay", todayEpochDay);
+  }
+  else
+  {
+    pressCount = journalPrefs.getInt("pressCount", 0);
+  }
+
+  pressCount++;
+  journalPrefs.putInt("pressCount", pressCount);
+
+  Serial.printf("Button press #%d today.\n", pressCount);
+
+  if (pressCount == 1)
+    joyfulReaction(todayEpochDay);
+  else if (pressCount == 2)
+    confusedReaction();
+  else
+    angryReaction();
+}
+
+// TO DO: IF button is not pressed for a day, robot will be sad tomorrow, streak lost, and
+// keeps track of new streak and back to default when button is pressed again OR if robot is
+// patted on head few times, becomes happy again
+
+// ---------- Touch reaction ----------
+
+void touchReaction()
+{
+  Serial.println("MOCHI TOUCHED!");
+
+  roboEyes.blink();
+  touchCooldown = true;
+}
+
+// ---------- Setup ----------
 
 void setup()
 {
-
   Serial.begin(115200);
+  delay(2000);
 
-  // ==========================================
-  // I2C
-  // SDA = GPIO 21
-  // SCL = GPIO 22
-  // ==========================================
+  Serial.println();
+  Serial.println("=================================");
+  Serial.println("       MOCHI JOURNAL ROBOT");
+  Serial.println("=================================");
 
   Wire.begin(21, 22);
-
-  // ==========================================
-  // JOURNAL BUTTON
-  // ==========================================
+  Serial.println("I2C started.");
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
+  Serial.println("Journal button configured.");
 
-  Serial.println("Starting Mochi...");
-
-  // ==========================================
-  // OLED
-  // ==========================================
+  Serial.println("Starting OLED...");
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS))
   {
-
     Serial.println("OLED not found!");
 
     while (true)
@@ -81,235 +362,77 @@ void setup()
 
   Serial.println("OLED connected!");
 
-  // ==========================================
-  // FT6206 TOUCH
-  // ==========================================
+  touchSetup();
 
-  if (!touch.begin(40))
+  journalPrefs.begin("journal", false);
+  Serial.printf(
+      "Loaded streak from flash: %d day(s)\n",
+      journalPrefs.getInt("streak", 0));
+
+  Serial.println("Starting RoboEyes...");
+
+  roboEyes.begin(SCREEN_WIDTH, SCREEN_HEIGHT, 60);
+  roboEyes.setDisplayColors(0, 1);
+  roboEyes.setWidth(40, 40);
+  roboEyes.setHeight(40, 40);
+  roboEyes.setBorderradius(10, 10);
+  roboEyes.setSpacebetween(10);
+  roboEyes.setMood(HAPPY);
+  roboEyes.setAutoblinker(ON, 3, 2);
+  roboEyes.setIdleMode(ON, 2, 2);
+
+  Serial.println();
+  Serial.println("Connecting to Wi-Fi...");
+
+  wifiConnected = connectToWiFi();
+
+  if (wifiConnected)
   {
-
-    Serial.println("FT6206 touch controller not found!");
-
-    while (true)
-    {
-      delay(100);
-    }
+    getCurrentTime();
+    printCurrentDateTime();
   }
 
-  Serial.println("FT6206 touch connected!");
-
-  // ==========================================
-  // START WITH HAPPY FACE
-  // ==========================================
-
-  showHappyFace();
-
-  showingHappy = true;
+  Serial.println();
+  Serial.println("----------------------------");
+  Serial.println("RoboEyes test ready!");
+  Serial.println("Touch = blink");
+  Serial.println("Button = journal entry");
+  Serial.print("Wi-Fi = ");
+  Serial.println(wifiConnected ? "connected" : "NOT connected");
+  Serial.print("NTP = ");
+  Serial.println(wifiConnected ? "synchronised" : "skipped");
+  Serial.println("----------------------------");
 }
 
-// ==========================================
-// LOOP
-// ==========================================
+// ---------- Loop ----------
 
 void loop()
 {
-
-  // ==========================================
-  // JOURNAL BUTTON
-  // ==========================================
+  roboEyes.update();
 
   if (digitalRead(BUTTON_PIN) == LOW)
   {
+    Serial.println("BUTTON PRESSED");
 
-    Serial.println("Button pressed!");
+    handleJournalButtonPress();
 
-    showHappyFace();
-
-    happyStartTime = millis();
-
-    showingHappy = true;
-    showingBlush = false;
-    showingJoy = false;
-
-    // Wait for button release
     while (digitalRead(BUTTON_PIN) == LOW)
     {
+      roboEyes.update();
       delay(10);
     }
 
-    // Debounce
     delay(50);
   }
 
-  // ==========================================
-  // CAPACITIVE TOUCH
-  // ==========================================
-
-  if (touch.touched() && !touchActive && !touchCooldown)
+  if (touchIsTouched() && !touchCooldown)
   {
-
-    Serial.println("BLINK!");
-
-    // Stop other face animations
-    showingHappy = false;
-    showingBlush = false;
-    showingJoy = false;
-
-    // Start blink animation
-    touchActive = true;
-
-    // ------------------------------------------
-    // FRAME 1 - HAPPY
-    // ------------------------------------------
-
-    showHappyFace();
-
-    delay(100);
-
-    // ------------------------------------------
-    // FRAME 2 - BLINK 1
-    // ------------------------------------------
-
-    showBlink1();
-
-    delay(70);
-
-    // ------------------------------------------
-    // FRAME 3 - BLINK 2
-    // ------------------------------------------
-
-    showBlink2();
-
-    delay(60);
-
-    showBlink1();
-
-    delay(70);
-
-    // ------------------------------------------
-    // FRAME 4 - HAPPY AGAIN
-    // ------------------------------------------
-
-    showHappyFace();
-
-    Serial.println("Blink finished!");
-
-    // Animation finished
-    touchActive = false;
-
-    // Prevent another blink while finger
-    // is still touching
-    touchCooldown = true;
+    touchReaction();
   }
 
-  // ==========================================
-  // FINGER HAS BEEN RELEASED
-  // ==========================================
-
-  if (!touch.touched() && touchCooldown)
+  if (!touchIsTouched() && touchCooldown)
   {
-
-    Serial.println("Touch released - ready again!");
-
+    Serial.println("TOUCH RELEASED");
     touchCooldown = false;
   }
-
-  // ==========================================
-  // HAPPY FACE
-  // ==========================================
-
-  void showHappyFace()
-  {
-
-    display.clearDisplay();
-
-    display.drawBitmap(
-        0,
-        0,
-        epd_bitmap_happy,
-        128,
-        64,
-        SSD1306_WHITE);
-
-    display.display();
-  }
-
-  // ==========================================
-  // BLUSH FACE
-  // ==========================================
-
-  void showBlushFace()
-  {
-
-    display.clearDisplay();
-
-    display.drawBitmap(
-        0,
-        0,
-        epd_bitmap_robot_blush,
-        128,
-        64,
-        SSD1306_WHITE);
-
-    display.display();
-  }
-
-  // ==========================================
-  // JOY FACE
-  // ==========================================
-
-  void showJoyFace()
-  {
-
-    display.clearDisplay();
-
-    display.drawBitmap(
-        0,
-        0,
-        epd_bitmap_robot_joy,
-        128,
-        64,
-        SSD1306_WHITE);
-
-    display.display();
-  }
-
-  // ==========================================
-  // BLINK 1
-  // ==========================================
-
-  void showBlink1()
-  {
-
-    display.clearDisplay();
-
-    display.drawBitmap(
-        0,
-        0,
-        epd_bitmap_blink_1,
-        128,
-        64,
-        SSD1306_WHITE);
-
-    display.display();
-  }
-
-  // ==========================================
-  // BLINK 2
-  // ==========================================
-
-  void showBlink2()
-  {
-
-    display.clearDisplay();
-
-    display.drawBitmap(
-        0,
-        0,
-        epd_bitmap_blink_2,
-        128,
-        64,
-        SSD1306_WHITE);
-
-    display.display();
-  }
+}
