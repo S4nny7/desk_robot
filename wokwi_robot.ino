@@ -31,6 +31,9 @@
 #define TOUCH_PIN 27 // real TTP223 OUT pin
 #define BUTTON_PIN 26
 
+#define PET_JOYFUL_DURATION_MS 5500
+#define TIRED_HOUR 20 // merlin gets tired at 8pm
+
 // How long each reaction (mood/animation) holds before returning to idle (ms)
 #define JOYFUL_DURATION_MS 5000
 #define CONFUSED_DURATION_MS 5000
@@ -69,6 +72,57 @@ bool touchCooldown = false;
 bool wifiConnected = false;
 bool timeIsValid = false;
 
+// ---------- Background mood ----------
+
+bool isAfterTiredTime()
+{
+  if (!timeIsValid)
+  {
+    return false;
+  }
+
+  return timeInfo.tm_hour >= TIRED_HOUR;
+}
+
+void updateBackgroundMood()
+{
+  if (isAfterTiredTime())
+  {
+    roboEyes.setMood(TIRED);
+  }
+  else
+  {
+    roboEyes.setMood(DEFAULT);
+  }
+}
+
+void checkTiredTime()
+{
+  static bool wasTired = false;
+
+  if (!timeIsValid)
+  {
+    return;
+  }
+
+  bool shouldBeTired = isAfterTiredTime();
+
+  if (shouldBeTired && !wasTired)
+  {
+    Serial.println("Tired time reached - MERLIN IS TIRED.");
+
+    roboEyes.setMood(TIRED);
+    wasTired = true;
+  }
+  else if (!shouldBeTired && wasTired)
+  {
+    Serial.println("New day - MERLIN IS BACK TO DEFAULT.");
+
+    roboEyes.setMood(DEFAULT);
+    wasTired = false;
+  }
+}
+
 // ---------- Status text overlay ----------
 
 String statusText = "";
@@ -85,9 +139,7 @@ void showStatusText(String text, unsigned long durationMs)
 void updateStatusTextDisplay()
 {
   if (!statusTextVisible)
-  {
     return;
-  }
 
   if (millis() >= statusTextExpiry)
   {
@@ -100,10 +152,24 @@ void updateStatusTextDisplay()
   }
 
   display.fillRect(0, STATUS_TEXT_Y, SCREEN_WIDTH, 8, SSD1306_BLACK);
+
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, STATUS_TEXT_Y);
+
+  int16_t x1, y1;
+  uint16_t textWidth, textHeight;
+
+  display.getTextBounds(
+      statusText,
+      0, 0,
+      &x1, &y1,
+      &textWidth, &textHeight);
+
+  int16_t x = (SCREEN_WIDTH - textWidth) / 2;
+
+  display.setCursor(x, STATUS_TEXT_Y);
   display.print(statusText);
+
   display.display();
 }
 
@@ -319,7 +385,7 @@ void joyfulReaction(long todayEpochDay)
     delay(30);
   }
 
-  roboEyes.setMood(HAPPY);
+  updateBackgroundMood();
 }
 
 void confusedReaction()
@@ -338,7 +404,7 @@ void confusedReaction()
     delay(10);
   }
 
-  roboEyes.setMood(DEFAULT);
+  updateBackgroundMood();
 }
 
 void angryReaction()
@@ -357,7 +423,7 @@ void angryReaction()
     delay(20);
   }
 
-  roboEyes.setMood(DEFAULT);
+  updateBackgroundMood();
 }
 
 void handleJournalButtonPress()
@@ -403,9 +469,23 @@ void handleJournalButtonPress()
 
 void touchReaction()
 {
-  Serial.println("MERLIN TOUCHED!");
+  Serial.println("MERLIN PETTED! Merlin is joyful!");
 
-  roboEyes.blink();
+  roboEyes.setMood(HAPPY);
+  roboEyes.anim_laugh();
+
+  unsigned long startTime = millis();
+
+  while (millis() - startTime < PET_JOYFUL_DURATION_MS)
+  {
+    roboEyes.update();
+    updateStatusTextDisplay();
+    delay(20);
+  }
+
+  // Return to normal background mood
+  updateBackgroundMood();
+
   touchCooldown = true;
 }
 
@@ -456,7 +536,7 @@ void setup()
   roboEyes.setHeight(40, 40);
   roboEyes.setBorderradius(10, 10);
   roboEyes.setSpacebetween(10);
-  roboEyes.setMood(HAPPY);
+  roboEyes.setMood(DEFAULT);
   roboEyes.setAutoblinker(ON, 3, 2);
   roboEyes.setIdleMode(ON, 2, 2);
 
@@ -470,6 +550,7 @@ void setup()
     getCurrentTime();
     printCurrentDateTime();
   }
+  updateBackgroundMood();
 
   Serial.println();
   Serial.println("----------------------------");
@@ -489,6 +570,20 @@ void loop()
 {
   roboEyes.update();
   updateStatusTextDisplay();
+
+  // Update the current time every second
+  static unsigned long lastTimeCheck = 0;
+
+  if (millis() - lastTimeCheck >= 1000)
+  {
+    lastTimeCheck = millis();
+
+    if (getLocalTime(&timeInfo))
+    {
+      timeIsValid = true;
+      checkTiredTime();
+    }
+  }
 
   if (digitalRead(BUTTON_PIN) == LOW)
   {
