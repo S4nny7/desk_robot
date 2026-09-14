@@ -31,6 +31,16 @@
 #define TOUCH_PIN 27 // real TTP223 OUT pin
 #define BUTTON_PIN 26
 
+// How long each reaction (mood/animation) holds before returning to idle (ms)
+#define JOYFUL_DURATION_MS 5000
+#define CONFUSED_DURATION_MS 5000
+#define ANGRY_DURATION_MS 5200
+
+// How long the "Logged at: HH:MM" status text stays on screen (ms)
+#define STATUS_TEXT_JOYFUL_MS (30UL * 60UL * 1000UL) // 30 minutes
+#define STATUS_TEXT_REMINDER_MS 10000UL              // 10 seconds (confused/angry)
+#define STATUS_TEXT_Y 56                             // bottom row, below the eyes
+
 #if WOKWI_SIMULATION
 const char *ssid_Router = "Wokwi-GUEST";
 const char *password_Router = "";
@@ -59,7 +69,67 @@ bool touchCooldown = false;
 bool wifiConnected = false;
 bool timeIsValid = false;
 
-// ---------- Touch abstraction ----------
+// ---------- Status text overlay ----------
+
+String statusText = "";
+unsigned long statusTextExpiry = 0;
+bool statusTextVisible = false;
+
+void showStatusText(String text, unsigned long durationMs)
+{
+  statusText = text;
+  statusTextExpiry = millis() + durationMs;
+  statusTextVisible = true;
+}
+
+void updateStatusTextDisplay()
+{
+  if (!statusTextVisible)
+  {
+    return;
+  }
+
+  if (millis() >= statusTextExpiry)
+  {
+    display.fillRect(0, STATUS_TEXT_Y, SCREEN_WIDTH, 8, SSD1306_BLACK);
+    display.display();
+
+    statusTextVisible = false;
+    statusText = "";
+    return;
+  }
+
+  display.fillRect(0, STATUS_TEXT_Y, SCREEN_WIDTH, 8, SSD1306_BLACK);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, STATUS_TEXT_Y);
+  display.print(statusText);
+  display.display();
+}
+
+String buildLoggedAtText()
+{
+  unsigned long lastEntryEpoch = journalPrefs.getULong("lastEntryTime", 0);
+
+  if (lastEntryEpoch == 0)
+  {
+    return "No entry logged yet";
+  }
+
+  time_t entryTime = (time_t)lastEntryEpoch;
+  struct tm entryTm;
+  localtime_r(&entryTime, &entryTm);
+
+  char buf[24];
+  snprintf(
+      buf,
+      sizeof(buf),
+      "Logged at: %02d:%02d",
+      entryTm.tm_hour,
+      entryTm.tm_min);
+
+  return String(buf);
+}
 
 void touchSetup()
 {
@@ -222,7 +292,7 @@ long getEpochDay()
 
 void joyfulReaction(long todayEpochDay)
 {
-  Serial.println("MOCHI IS JOYFUL! Journal entry logged.");
+  Serial.println("MERLIN IS JOYFUL! Journal entry logged.");
 
   long lastEntryDay = journalPrefs.getLong("lastEntryDay", -1);
   int streak = journalPrefs.getInt("streak", 0);
@@ -236,14 +306,17 @@ void joyfulReaction(long todayEpochDay)
   Serial.printf("Current streak: %d day(s)\n", streak);
   Serial.println(&timeInfo, "Logged at: %A, %d %B %Y %H:%M:%S");
 
+  showStatusText(buildLoggedAtText(), STATUS_TEXT_JOYFUL_MS);
+
   roboEyes.setMood(HAPPY);
   roboEyes.anim_laugh();
 
   unsigned long startTime = millis();
-  while (millis() - startTime < 1000)
+  while (millis() - startTime < JOYFUL_DURATION_MS)
   {
     roboEyes.update();
-    delay(10);
+    updateStatusTextDisplay();
+    delay(30);
   }
 
   roboEyes.setMood(HAPPY);
@@ -251,14 +324,17 @@ void joyfulReaction(long todayEpochDay)
 
 void confusedReaction()
 {
-  Serial.println("MOCHI IS CONFUSED! You already journaled today.");
+  Serial.println("MERLIN IS CONFUSED! You already journaled today.");
+
+  showStatusText(buildLoggedAtText(), STATUS_TEXT_REMINDER_MS);
 
   roboEyes.anim_confused();
 
   unsigned long startTime = millis();
-  while (millis() - startTime < 1000)
+  while (millis() - startTime < CONFUSED_DURATION_MS)
   {
     roboEyes.update();
+    updateStatusTextDisplay();
     delay(10);
   }
 
@@ -267,15 +343,18 @@ void confusedReaction()
 
 void angryReaction()
 {
-  Serial.println("MOCHI IS ANGRY! Stop pressing, one entry per day.");
+  Serial.println("MERLIN IS ANGRY! Stop pressing, one entry per day.");
+
+  showStatusText(buildLoggedAtText(), STATUS_TEXT_REMINDER_MS);
 
   roboEyes.setMood(ANGRY);
 
   unsigned long startTime = millis();
-  while (millis() - startTime < 1200)
+  while (millis() - startTime < ANGRY_DURATION_MS)
   {
     roboEyes.update();
-    delay(10);
+    updateStatusTextDisplay();
+    delay(20);
   }
 
   roboEyes.setMood(DEFAULT);
@@ -324,7 +403,7 @@ void handleJournalButtonPress()
 
 void touchReaction()
 {
-  Serial.println("MOCHI TOUCHED!");
+  Serial.println("MERLIN TOUCHED!");
 
   roboEyes.blink();
   touchCooldown = true;
@@ -339,7 +418,7 @@ void setup()
 
   Serial.println();
   Serial.println("=================================");
-  Serial.println("       MOCHI JOURNAL ROBOT");
+  Serial.println("       MERLIN JOURNAL ROBOT");
   Serial.println("=================================");
 
   Wire.begin(21, 22);
@@ -409,6 +488,7 @@ void setup()
 void loop()
 {
   roboEyes.update();
+  updateStatusTextDisplay();
 
   if (digitalRead(BUTTON_PIN) == LOW)
   {
@@ -419,6 +499,7 @@ void loop()
     while (digitalRead(BUTTON_PIN) == LOW)
     {
       roboEyes.update();
+      updateStatusTextDisplay();
       delay(10);
     }
 
