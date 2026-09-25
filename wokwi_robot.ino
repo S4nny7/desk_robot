@@ -11,7 +11,7 @@
 #include <FluxGarage_RoboEyes.h>
 
 // Set 1 for Wokwi simulator, 0 for real board (TTP223)
-#define WOKWI_SIMULATION 1
+#define WOKWI_SIMULATION 0
 
 #if WOKWI_SIMULATION
 #include <Adafruit_FT6206.h>
@@ -28,7 +28,7 @@
 #define TFT_DC 2
 #endif
 
-#define TOUCH_PIN 27 // real TTP223 OUT pin
+#define TOUCH_PIN 32
 #define BUTTON_PIN 26
 
 #define PET_JOYFUL_DURATION_MS 5500
